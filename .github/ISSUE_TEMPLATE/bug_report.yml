@@ -1,0 +1,56 @@
+name: 🐛 Bug report
+description: Something behaves incorrectly or crashes
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! For anything involving credentials or real capital,
+        please read SECURITY.md and report privately instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you run, and what went wrong?
+      placeholder: "cocoon dataset build ... exited with ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands, in order. Remember global flags go before the subcommand.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: exit-code
+    attributes:
+      label: Exit code (if any)
+      description: "Cocoon uses meaningful exit codes — e.g. 10 config, 20 MT5 timeout, 30 dataset, 31 training."
+  - type: dropdown
+    id: python
+    attributes:
+      label: Python version
+      options: ["3.11", "3.12", "other (note below)"]
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Windows 11 / macOS 14 / Ubuntu 22.04"
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Sanity checks
+      options:
+        - label: "`python -m compileall src` passes"
+        - label: "I put global flags (--output, --dry-run, --profile) before the subcommand"
+        - label: "This is not about a live MT5 terminal (Cocoon is unvalidated against real terminals)"

@@ -1,0 +1,26 @@
+name: 💡 Feature request
+description: Suggest an improvement or new capability
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Design principles this respects
+      description: Cocoon has non-negotiable invariants (see CONTRIBUTING.md).
+      options:
+        - label: "Keeps features point-in-time-safe (no future leakage)"
+        - label: "Preserves downward-only layering (core → data → ml → trading → bridge → cli)"
+        - label: "Keeps backtest/live on the same code path"
+        - label: "Preserves determinism (byte-identical dataset/run IDs)"

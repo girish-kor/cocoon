@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Security / credential / capital-risk report
+    url: https://github.com/OWNER/cocoon/security/advisories/new
+    about: Report privately — never open a public issue for anything involving secrets or real money.
+  - name: 💬 Questions & discussion
+    url: https://github.com/OWNER/cocoon/discussions
+    about: Ask how something works or share what you're building on Cocoon.

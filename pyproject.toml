@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cocoon"
+version = "0.1.0"
+description = "Cocoon — Forex Trading ML Model V1 CLI"
+requires-python = ">=3.11,<=3.12.10"
+license = { text = "MIT" }
+dependencies = [
+    "typer==0.12.*",
+    "click>=8.1,<8.2",
+    "questionary==2.0.*",
+    "rich==13.*",
+    "pydantic==2.7.*",
+    "pydantic-settings==2.4.*",
+    "polars==1.*",
+    "lightgbm==4.5.*",
+    "xgboost==2.1.*",
+    "pytorch-tabnet==4.1.*",
+    "optuna==4.*",
+    "mlflow==2.16.*",
+    "pyzmq==26.*",
+    "msgpack==1.0.*",
+    "sqlalchemy==2.0.*",
+    "structlog==24.*",
+    "apscheduler==3.*",
+    "numpy==2.0.*",
+    "scikit-learn==1.5.*",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+cocoon = "cocoon.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cocoon"]

@@ -1,0 +1,29 @@
+# Secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data / logs / artifacts
+data/
+logs/
+mlruns/
+mlflow.db
+mlflow.db/
+config/
+
+# MQL5 build artifacts
+*.ex5
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.vscode/
