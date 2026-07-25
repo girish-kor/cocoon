@@ -129,6 +129,13 @@ class MarketDataManager:
             self._buffers[key] = buffer
         return buffer
 
+    def reset_buffer(self, symbol: str, timeframe: str) -> None:
+        """Install an empty live window, discarding the cache seed. A paper
+        replay of the cache itself must accumulate bars chronologically —
+        seeding would put the cached future (including its last bars) in
+        front of the first replayed bar, corrupting every feature."""
+        self._buffers[(symbol, timeframe)] = RingBuffer(capacity=self._buffer_capacity)
+
     def ingest_bar(self, bar: Bar, *, persist: bool = False) -> None:
         buffer = self._buffer(bar.symbol, bar.timeframe)
         buffer.append(bar)

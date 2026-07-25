@@ -316,6 +316,9 @@ class LiveRuntime:
 
     def _paper_feed(self, symbol: str, tf: str) -> None:
         frame = self._md.load_cache(symbol, tf).sort("ts_unix_ms")
+        # The replay IS the cache: start from an empty window so features
+        # see bars strictly in replay order (no cache seed = no lookahead).
+        self._md.reset_buffer(symbol, tf)
         delay = 1.0 / self._paper_speed if self._paper_speed > 0 else 0.0
         equity = self._paper_equity
         last_close = 0.0
