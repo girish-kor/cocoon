@@ -15,9 +15,15 @@ app = typer.Typer(help="Model registry", no_args_is_help=True)
 @guard
 def list_models(ctx: typer.Context) -> None:
     app_ctx = get_context(ctx)
+    # Deployables first: production, then staging, then unpromoted.
+    stage_rank = {"production": 0, "staging": 1, "none": 2}
+    entries = sorted(
+        app_ctx.registry().list_runs(),
+        key=lambda e: (stage_rank.get(e.stage, 3), e.model_name, e.run_id),
+    )
     rows = [
         {"run_id": e.run_id, "model": e.model_name, "stage": e.stage, "dataset_id": e.dataset_id, "hash": e.artifact_hash[:12]}
-        for e in app_ctx.registry().list_runs()
+        for e in entries
     ]
     output_rows(ctx, rows, title="model registry")
 

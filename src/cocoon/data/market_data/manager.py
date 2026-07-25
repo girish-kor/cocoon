@@ -66,10 +66,22 @@ class MarketDataManager:
         return pl.read_parquet(path).sort("ts_unix_ms")
 
     def coverage_status(self) -> list[dict]:
+        from cocoon.data.market_data.mt5_fetcher import TIMEFRAME_SECONDS
+
         rows: list[dict] = []
         if not self._raw_dir.exists():
             return rows
-        for path in sorted(self._raw_dir.glob("*/*.parquet")):
+        # Sort by symbol, then timeframe chronologically (M1 < M5 < … < H1);
+        # a plain path sort would order H1 before M5 alphabetically.
+        paths = sorted(
+            self._raw_dir.glob("*/*.parquet"),
+            key=lambda p: (
+                p.parent.name,
+                TIMEFRAME_SECONDS.get(p.stem, 10**9),
+                p.stem,
+            ),
+        )
+        for path in paths:
             frame = pl.read_parquet(path, columns=["ts_unix_ms"])
             first_ts = int(frame["ts_unix_ms"].min()) if frame.height else None
             last_ts = int(frame["ts_unix_ms"].max()) if frame.height else None

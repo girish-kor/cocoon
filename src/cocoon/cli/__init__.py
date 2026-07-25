@@ -9,6 +9,7 @@ this package imports neither main nor the command modules.
 
 from __future__ import annotations
 
+import enum
 import functools
 import json
 from dataclasses import dataclass, field
@@ -150,6 +151,43 @@ def get_context(ctx: typer.Context) -> AppContext:
     return ctx.obj
 
 
+def _fmt_scalar(value: Any) -> str:
+    """Human-table cell formatting: thousands separators for ints, compact
+    floats. The `--output json` path never goes through here — that output
+    is a scripting contract and stays raw."""
+    if isinstance(value, enum.Enum):
+        return str(value.value)
+    if isinstance(value, bool) or value is None:
+        return str(value)
+    if isinstance(value, int):
+        # Group 5+ digit numbers only: "110,125,169" reads better but a
+        # port rendered "5,555" reads worse.
+        return f"{value:,}" if abs(value) >= 10_000 else str(value)
+    if isinstance(value, float):
+        return f"{value:,.6g}"
+    return str(value)
+
+
+def _flatten_lines(mapping: dict[str, Any], prefix: str = "") -> list[str]:
+    lines: list[str] = []
+    for key, value in mapping.items():
+        if isinstance(value, dict):
+            lines.extend(_flatten_lines(value, f"{prefix}{key}."))
+        else:
+            lines.append(f"{prefix}{key} = {_render_value(value)}")
+    return lines
+
+
+def _render_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return "\n".join(_flatten_lines(value))
+    if isinstance(value, list):
+        if all(not isinstance(item, (dict, list)) for item in value):
+            return ", ".join(str(item) for item in value)
+        return json.dumps(value, default=str)
+    return _fmt_scalar(value)
+
+
 def output_rows(ctx: typer.Context, rows: list[dict[str, Any]], *, title: str = "") -> None:
     app_ctx = get_context(ctx)
     if app_ctx.options.output == "json":
@@ -158,11 +196,20 @@ def output_rows(ctx: typer.Context, rows: list[dict[str, Any]], *, title: str = 
     if not rows:
         console.print(f"[dim]{title or 'no rows'}[/]")
         return
+    columns = list(rows[0].keys())
+    numeric = {
+        col: all(
+            isinstance(row.get(col), (int, float))
+            and not isinstance(row.get(col), bool)
+            for row in rows
+        )
+        for col in columns
+    }
     table = Table(title=title or None)
-    for col in rows[0].keys():
-        table.add_column(str(col))
+    for col in columns:
+        table.add_column(str(col), justify="right" if numeric[col] else "left")
     for row in rows:
-        table.add_row(*[str(row.get(col, "")) for col in rows[0].keys()])
+        table.add_row(*[_fmt_scalar(row.get(col, "")) for col in columns])
     console.print(table)
 
 
@@ -172,8 +219,8 @@ def output_obj(ctx: typer.Context, obj: dict[str, Any], *, title: str = "") -> N
         console.print_json(json.dumps(obj, default=str))
         return
     table = Table(title=title or None, show_header=False)
-    table.add_column("key")
+    table.add_column("key", style="bold")
     table.add_column("value")
     for k, v in obj.items():
-        table.add_row(str(k), json.dumps(v, default=str) if isinstance(v, (dict, list)) else str(v))
+        table.add_row(str(k), _render_value(v))
     console.print(table)

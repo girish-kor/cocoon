@@ -91,6 +91,72 @@ def run(
     output_obj(ctx, {"backtest_id": bt_id, "total_trades": payload["total_trades"], "total_pnl": payload["total_pnl"]}, title="backtest complete")
 
 
+# (csv_key, table label, format) in reading order: activity → result → risk.
+_METRIC_ROWS = (
+    ("n_trades", "trades", "int"),
+    ("win_rate", "win rate", "pct1"),
+    ("profit_factor", "profit factor", "2f"),
+    ("avg_win", "avg win", "money"),
+    ("avg_loss", "avg loss", "money"),
+    ("gross_profit", "gross profit", "money"),
+    ("gross_loss", "gross loss", "money"),
+    ("expectancy", "expectancy / trade", "money"),
+    ("total_pnl", "total pnl", "money"),
+    ("final_equity", "final equity", "money"),
+    ("max_drawdown", "max drawdown", "pct2"),
+    ("sharpe", "sharpe", "2f"),
+    ("signals", "signals", "int"),
+    ("rejected", "rejected by risk", "int"),
+)
+
+
+def _fmt_metric(value, kind: str) -> str:
+    if kind == "pct1":
+        return f"{value * 100:.1f}%"
+    if kind == "pct2":
+        return f"{value * 100:.2f}%"
+    if kind == "2f":
+        return f"{value:.2f}"
+    if kind == "money":
+        return f"{value:,.2f}"
+    return f"{value:,}" if abs(value) >= 10_000 else str(value)
+
+
+def _detail_table(per_symbol: list[dict]):
+    """Every metric for every symbol, transposed — metrics as rows, one
+    column per symbol — so full detail fits any terminal width."""
+    from rich.table import Table
+
+    table = Table(title="backtest metrics — full detail")
+    table.add_column("metric", style="bold")
+    ordered = sorted(per_symbol, key=lambda r: r["symbol"])
+    for row in ordered:
+        table.add_column(row["symbol"], justify="right")
+    for key, label, kind in _METRIC_ROWS:
+        table.add_row(label, *[_fmt_metric(row[key], kind) for row in ordered])
+    return table
+
+
+def _summary_rows(per_symbol: list[dict]) -> list[dict]:
+    """Curated per-symbol view: scannable units (percentages, 2-dp money),
+    ordered result → risk → activity, sized to fit an 80-column terminal.
+    Full precision and every metric stay available via `--export csv|json`."""
+    return [
+        {
+            "symbol": r["symbol"],
+            "trades": r["n_trades"],
+            "win %": round(r["win_rate"] * 100, 1),
+            "PF": round(r["profit_factor"], 2),
+            "pnl": round(r["total_pnl"], 2),
+            "dd %": round(r["max_drawdown"] * 100, 2),
+            "sharpe": round(r["sharpe"], 2),
+            "sig": r["signals"],
+            "rej": r["rejected"],
+        }
+        for r in sorted(per_symbol, key=lambda r: r["symbol"])
+    ]
+
+
 @app.command()
 @guard
 def report(
@@ -110,16 +176,45 @@ def report(
     if export == "csv":
         import csv
         import io
+        import sys
+
+        if sys.stdout.isatty():
+            # Interactive terminal: a wrapped CSV dump is unreadable, so
+            # render the same full detail as a table. Redirects and pipes
+            # (`> report.csv`, `| jq`) still get raw CSV below.
+            console.print(_detail_table(payload["per_symbol"]))
+            console.print(
+                f"[dim]raw CSV: cocoon backtest report {backtest_id} "
+                f"--export csv > report.csv[/]"
+            )
+            return
 
         buf = io.StringIO()
         rows = payload["per_symbol"]
         if rows:
+            # 6 significant digits: still machine-parseable, no 16-digit noise.
+            trimmed = [
+                {
+                    k: (format(v, ".6g") if isinstance(v, float) else v)
+                    for k, v in row.items()
+                }
+                for row in rows
+            ]
             writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
             writer.writeheader()
-            writer.writerows(rows)
-        console.print(buf.getvalue())
+            writer.writerows(trimmed)
+        # print(), not console.print(): rich wraps at terminal width, which
+        # corrupts CSV lines when the output is redirected to a file.
+        print(buf.getvalue(), end="")
         return
-    output_obj(ctx, {k: v for k, v in payload.items() if k != "per_symbol"}, title=f"backtest {backtest_id}")
+    if app_ctx.options.output == "json":
+        console.print_json(json.dumps(payload, default=str))
+        return
+    output_obj(
+        ctx,
+        {k: v for k, v in payload.items() if k != "per_symbol"},
+        title=f"backtest {backtest_id}",
+    )
     from cocoon.cli import output_rows
 
-    output_rows(ctx, payload["per_symbol"], title="per-symbol metrics")
+    output_rows(ctx, _summary_rows(payload["per_symbol"]), title="per-symbol metrics")

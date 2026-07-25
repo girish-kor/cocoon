@@ -18,7 +18,7 @@ def list_positions(ctx: typer.Context) -> None:
     repo = PositionRepository(app_ctx.database())
     rows = [
         {"ticket": p["broker_ticket_id"], "symbol": p["symbol"], "dir": p["direction"], "lots": p["volume_lots"], "entry": p["open_price"], "pnl": p["unrealized_pnl"], "origin": p["origin"]}
-        for p in repo.list_open()
+        for p in sorted(repo.list_open(), key=lambda p: (p["symbol"], p["broker_ticket_id"]))
     ]
     output_rows(ctx, rows, title="open positions")
 

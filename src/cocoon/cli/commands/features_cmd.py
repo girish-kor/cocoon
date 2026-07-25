@@ -39,11 +39,37 @@ def build(
     )
 
 
+_SMC_FEATURES = frozenset(
+    {"bos", "choch", "order_block", "fvg", "liquidity_sweep", "premium_discount_zone"}
+)
+_OSCILLATOR_FEATURES = frozenset({"rsi_14", "atr_14_rel", "bb_pct_b_20", "macd_hist_rel"})
+
+
+def _feature_category(name: str) -> str:
+    if name in _SMC_FEATURES:
+        return "smart money concepts"
+    if name.startswith("ema_dev_"):
+        return "trend"
+    if name in _OSCILLATOR_FEATURES:
+        return "oscillator"
+    if name.startswith("session_"):
+        return "session flag"
+    if name.startswith("dow_"):
+        return "day-of-week flag"
+    return "plugin"
+
+
 @app.command(name="list")
 @guard
 def list_features(ctx: typer.Context) -> None:
     app_ctx = get_context(ctx)
     engine = FeatureEngine()
     engine.register_all(build_feature_catalogue(app_ctx.config.feature_engineering))
-    rows = [{"name": n} for n in engine.feature_names]
+    # Catalogue order is the registration order — the exact column order of
+    # every dataset and model feature vector — so it is preserved, not
+    # re-sorted; the index column makes that ordinal explicit.
+    rows = [
+        {"#": i, "name": name, "category": _feature_category(name)}
+        for i, name in enumerate(engine.feature_names, start=1)
+    ]
     output_rows(ctx, rows, title="registered FeatureFn catalogue")

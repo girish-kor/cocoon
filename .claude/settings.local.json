@@ -14,7 +14,9 @@
       "PowerShell(& \"C:\\\\Users\\\\giris\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" \"C:\\\\Users\\\\giris\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-giris-Desktop-cocoon\\\\45db6c3e-f71b-42eb-9bbf-7f31e263983f\\\\scratchpad\\\\verify_pit.py\")",
       "PowerShell(cocoon config *)",
       "PowerShell(cocoon train *)",
-      "PowerShell(Remove-Item *)"
+      "PowerShell(Remove-Item *)",
+      "Artifact",
+      "PowerShell(cocoon backtest *)"
     ]
   }
 }
