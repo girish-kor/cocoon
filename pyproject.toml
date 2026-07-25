@@ -32,7 +32,7 @@ dependencies = [
 ]
 
 [project.scripts]
-cocoon = "cocoon.cli.main:app"
+cocoon = "cocoon.cli.main:entrypoint"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cocoon"]

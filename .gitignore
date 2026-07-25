@@ -12,13 +12,15 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# Data / logs / artifacts
-data/
-logs/
-mlruns/
-mlflow.db
-mlflow.db/
-config/
+# Data / logs / artifacts — anchored to the repo root: unanchored `data/`
+# and `config/` also match src/cocoon/data/ and src/cocoon/core/config/,
+# which silently excluded those packages from version control.
+/data/
+/logs/
+/mlruns/
+/mlflow.db
+/mlflow.db/
+/config/
 
 # MQL5 build artifacts
 *.ex5
