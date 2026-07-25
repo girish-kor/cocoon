@@ -86,7 +86,11 @@ class AppContext:
 
     def audit_logger(self) -> AuditLogger:
         if self._audit is None:
-            self._audit = AuditLogger(self.config.logging.audit_log_path)
+            from cocoon.persistence.audit_sink import DbMirroredAuditLogger
+
+            self._audit = DbMirroredAuditLogger(
+                self.config.logging.audit_log_path, self.database()
+            )
         return self._audit
 
     def plugin_loader(self):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from cocoon.cli import console, get_context, guard, output_obj, output_rows
+from cocoon.cli import get_context, guard, output_obj, output_rows
 from cocoon.data.feature_eng.engine import FeatureEngine, build_feature_catalogue
 
 app = typer.Typer(help="Feature engineering", no_args_is_help=True)
@@ -14,16 +14,16 @@ app = typer.Typer(help="Feature engineering", no_args_is_help=True)
 @guard
 def build(
     ctx: typer.Context,
-    symbol: str = typer.Option(..., "--symbol"),
-    tf: str = typer.Option(..., "--tf"),
-    from_date: str = typer.Option(None, "--from"),
-    to_date: str = typer.Option(None, "--to"),
+    symbol: str = typer.Option(..., "--symbol", help="Cached symbol, e.g. EURUSD"),
+    tf: str = typer.Option(..., "--tf", help="Cached timeframe, e.g. M5"),
+    from_date: str = typer.Option(None, "--from", help="Accepted for symmetry; build uses the cached range"),
+    to_date: str = typer.Option(None, "--to", help="Accepted for symmetry; build uses the cached range"),
 ) -> None:
     app_ctx = get_context(ctx)
     md = app_ctx.market_data()
     frame = md.load_cache(symbol, tf)
     if frame.height == 0:
-        console.print(f"[yellow]no cached bars for {symbol} {tf}[/]")
+        output_obj(ctx, {"symbol": symbol, "tf": tf, "cached_bars": 0}, title="features build")
         raise typer.Exit(0)
     engine = FeatureEngine()
     engine.register_all(build_feature_catalogue(app_ctx.config.feature_engineering))

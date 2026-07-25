@@ -15,10 +15,10 @@ app = typer.Typer(help="Dataset construction", no_args_is_help=True)
 @guard
 def build(
     ctx: typer.Context,
-    symbols: str = typer.Option(..., "--symbols", help="SYM[,SYM...]"),
-    tf: str = typer.Option("M5", "--tf"),
-    label_horizon: int = typer.Option(..., "--label-horizon"),
-    deadband_bps: float = typer.Option(0.0, "--deadband-bps"),
+    symbols: str = typer.Option(..., "--symbols", help="Comma-separated, e.g. EURUSD,GBPUSD"),
+    tf: str = typer.Option("M5", "--tf", help="Timeframe of the cached bars to build from"),
+    label_horizon: int = typer.Option(..., "--label-horizon", help="Bars ahead for the forward-return label, e.g. 5"),
+    deadband_bps: float = typer.Option(0.0, "--deadband-bps", help="Neutral band in basis points; returns within ±band are labelled 0"),
 ) -> None:
     app_ctx = get_context(ctx)
     symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
@@ -48,7 +48,10 @@ def list_datasets(ctx: typer.Context) -> None:
 
 @app.command()
 @guard
-def describe(ctx: typer.Context, dataset_id: str = typer.Argument(...)) -> None:
+def describe(
+    ctx: typer.Context,
+    dataset_id: str = typer.Argument(..., help="ds_* id, as shown by `cocoon dataset list`"),
+) -> None:
     app_ctx = get_context(ctx)
     meta = app_ctx.dataset_builder().describe(dataset_id)
     output_obj(ctx, asdict(meta), title=f"dataset {dataset_id}")

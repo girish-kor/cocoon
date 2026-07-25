@@ -6,7 +6,7 @@ from dataclasses import asdict
 
 import typer
 
-from cocoon.cli import console, get_context, guard, output_obj, output_rows
+from cocoon.cli import get_context, guard, output_obj, output_rows
 
 app = typer.Typer(help="Model registry", no_args_is_help=True)
 
@@ -32,28 +32,34 @@ def list_models(ctx: typer.Context) -> None:
 @guard
 def promote(
     ctx: typer.Context,
-    run_id: str = typer.Argument(...),
-    stage: str = typer.Option(..., "--stage", help="staging|production"),
+    run_id: str = typer.Argument(..., help="Registry run_id, e.g. lightgbm_0e80d8aeb573"),
+    stage: str = typer.Option(..., "--stage", help="staging|production (production is exclusive per model)"),
 ) -> None:
     app_ctx = get_context(ctx)
     entry = app_ctx.registry().promote(run_id, stage)
-    console.print(f"[green]promoted[/] {entry.run_id} -> {entry.stage}")
+    output_obj(ctx, {"run_id": entry.run_id, "stage": entry.stage}, title="model promote")
 
 
 @app.command()
 @guard
-def inspect(ctx: typer.Context, run_id: str = typer.Argument(...)) -> None:
+def inspect(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Registry run_id to show in full"),
+) -> None:
     app_ctx = get_context(ctx)
     entry = app_ctx.registry().get(run_id)
     if entry is None:
-        console.print(f"[yellow]no such run[/] {run_id}")
+        output_obj(ctx, {"run_id": run_id, "found": False}, title="model inspect")
         raise typer.Exit(0)
     output_obj(ctx, asdict(entry), title=f"model {run_id}")
 
 
 @app.command()
 @guard
-def delete(ctx: typer.Context, run_id: str = typer.Argument(...)) -> None:
+def delete(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Registry run_id to remove (artifact files are deleted too)"),
+) -> None:
     app_ctx = get_context(ctx)
     ok = app_ctx.registry().delete(run_id)
-    console.print(f"[green]deleted[/] {run_id}" if ok else f"[yellow]no such run[/] {run_id}")
+    output_obj(ctx, {"run_id": run_id, "deleted": bool(ok)}, title="model delete")

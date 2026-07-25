@@ -16,7 +16,9 @@
       "PowerShell(cocoon train *)",
       "PowerShell(Remove-Item *)",
       "Artifact",
-      "PowerShell(cocoon backtest *)"
+      "PowerShell(cocoon backtest *)",
+      "PowerShell(python -m py_compile src/cocoon/cli/main.py src/cocoon/cli/commands/backtest_cmd.py src/cocoon/cli/commands/config_cmd.py src/cocoon/cli/commands/data_cmd.py src/cocoon/cli/commands/dataset_cmd.py src/cocoon/cli/commands/features_cmd.py src/cocoon/cli/commands/model_cmd.py src/cocoon/cli/commands/plugin_cmd.py src/cocoon/cli/commands/positions_cmd.py src/cocoon/cli/commands/report_cmd.py src/cocoon/cli/commands/trade_cmd.py; if \\($?\\) { \"COMPILE OK\" })",
+      "PowerShell(python -m py_compile src/cocoon/cli/__init__.py src/cocoon/cli/commands/trade_cmd.py src/cocoon/cli/commands/report_cmd.py src/cocoon/persistence/audit_sink.py; if \\($?\\) { \"COMPILE OK\" })"
     ]
   }
 }

@@ -17,8 +17,8 @@ import typer
 from cocoon.cli import (
     GlobalOptions,
     build_context,
-    console,
     guard,
+    output_obj,
     _emit_error,
 )
 from cocoon.core.errors.exceptions import CocoonError
@@ -142,9 +142,7 @@ def init(ctx: typer.Context) -> None:
     if not profile.exists():
         profile.write_text("# profile overrides\n", encoding="utf-8")
         created.append(str(profile))
-    for path in created:
-        console.print(f"[green]created[/] {path}")
-    console.print("[bold green]cocoon initialised[/]")
+    output_obj(ctx, {"created": len(created), "paths": created}, title="cocoon initialised")
 
 
 def _register() -> None:

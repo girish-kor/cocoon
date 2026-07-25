@@ -5,11 +5,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
 
-from cocoon.cli import console, get_context, guard, output_obj, output_rows
+from cocoon.cli import get_context, guard, output_obj, output_rows
 
 app = typer.Typer(help="Reporting & export", no_args_is_help=True)
 
@@ -23,7 +24,10 @@ def _audit_events(app_ctx, event_type: str | None = None, n: int = 500):
 
 @app.command()
 @guard
-def session(ctx: typer.Context, session_id: str = typer.Argument(...)) -> None:
+def session(
+    ctx: typer.Context,
+    session_id: str = typer.Argument(..., help="Audit session id, e.g. cocoon-ea"),
+) -> None:
     app_ctx = get_context(ctx)
     events = _audit_events(app_ctx)
     matching = [e for e in events if str(e["payload"]).find(session_id) >= 0]
@@ -36,10 +40,20 @@ def session(ctx: typer.Context, session_id: str = typer.Argument(...)) -> None:
 
 @app.command()
 @guard
-def daily(ctx: typer.Context, date: str = typer.Option(..., "--date")) -> None:
+def daily(
+    ctx: typer.Context,
+    date: str = typer.Option(..., "--date", help="Day to report (UTC), e.g. 2026-07-25"),
+) -> None:
     app_ctx = get_context(ctx)
     orders = _audit_events(app_ctx, "ORDER")
-    rows = [e["payload"] for e in orders if str(e.get("ts_utc", "")).startswith(date) or True]
+    rows = []
+    for e in orders:
+        ts = e.get("ts_unix_ms")
+        if ts is None:
+            continue
+        day = datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+        if day == date:
+            rows.append(e["payload"])
     output_rows(ctx, rows[:100], title=f"orders for {date}")
 
 
@@ -48,7 +62,7 @@ def daily(ctx: typer.Context, date: str = typer.Option(..., "--date")) -> None:
 def export(
     ctx: typer.Context,
     fmt: str = typer.Option(..., "--format", help="csv|json"),
-    out: str = typer.Option(..., "--out"),
+    out: str = typer.Option(..., "--out", help="Output file path, e.g. ./out/audit.csv"),
 ) -> None:
     app_ctx = get_context(ctx)
     events = _audit_events(app_ctx, None, 5000)
@@ -64,6 +78,6 @@ def export(
             writer.writerow([e["seq"], e["ts_unix_ms"], e["event_type"], json.dumps(e["payload"], default=str)])
         out_path.write_text(buf.getvalue(), encoding="utf-8")
     else:
-        console.print(f"[red]unknown format[/] {fmt}")
+        output_obj(ctx, {"format": fmt, "status": "unknown format (use csv|json)"}, title="report export")
         raise typer.Exit(1)
-    console.print(f"[green]exported {len(events)} events[/] -> {out_path}")
+    output_obj(ctx, {"events": len(events), "format": fmt, "path": str(out_path)}, title="report export")

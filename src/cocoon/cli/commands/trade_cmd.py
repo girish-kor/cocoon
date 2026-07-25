@@ -12,14 +12,21 @@ from __future__ import annotations
 
 import json
 import signal as signal_mod
+import sys
 import time
 from pathlib import Path
 
 import typer
 
-from cocoon.cli import console, get_context, guard, output_obj
+from cocoon.cli import get_context, guard, output_obj
 from cocoon.core.errors.exceptions import ModelError
-from cocoon.core.interfaces.broker_adapter import Bar, OrderDirection, OrderIntent
+from cocoon.core.interfaces.broker_adapter import (
+    Bar,
+    OrderDirection,
+    OrderIntent,
+    OrderStatus,
+    PositionOrigin,
+)
 from cocoon.core.logging.setup import get_logger
 from cocoon.core.state_machine.engine import StateMachine
 from cocoon.core.state_machine.states import Event, State
@@ -66,7 +73,16 @@ def _read_control(app_ctx) -> str | None:
 
 
 class LiveRuntime:
-    def __init__(self, app_ctx, *, mode: str) -> None:
+    def __init__(
+        self,
+        app_ctx,
+        *,
+        mode: str,
+        paper_symbol: str | None = None,
+        paper_tf: str | None = None,
+        paper_speed: float = 20.0,
+        paper_equity: float = 10_000.0,
+    ) -> None:
         self._ctx = app_ctx
         self._mode = mode
         self._audit = app_ctx.audit_logger()
@@ -79,7 +95,25 @@ class LiveRuntime:
         self._risk = None
         self._portfolio = None
         self._order = None
+        self._pos_repo = None
         self._running = True
+        self._paper_symbol = paper_symbol
+        self._paper_tf = paper_tf
+        self._paper_speed = paper_speed
+        self._paper_equity = paper_equity
+        self._feed_thread = None
+        self.paper_result: dict | None = None
+        # Live-view feed: `stats` is swapped wholesale (atomic reference)
+        # and `equity_curve` is append-only, so a dashboard thread can
+        # read both without locking against the feed thread.
+        self.stats: dict = {}
+        self.equity_curve: list[float] = []
+        self._stat_signals = 0
+        self._stat_rejected = 0
+
+    @property
+    def state_name(self) -> str:
+        return self._sm.state.value
 
     def _build_engines(self) -> None:
         from cocoon.data.feature_eng.engine import FeatureEngine, build_feature_catalogue
@@ -104,6 +138,10 @@ class LiveRuntime:
         self._inference = InferenceEngine.from_registry(registry, entry.run_id)
         self._fe = FeatureEngine()
         self._fe.register_all(build_feature_catalogue(self._ctx.config.feature_engineering))
+        from cocoon.persistence.repositories import OrderRepository, PositionRepository
+
+        db = self._ctx.database()
+        self._pos_repo = PositionRepository(db)
         self._signal = SignalEngine(risk_config=self._ctx.config.risk)
         self._risk = RiskEngine(audit_logger=self._audit)
         self._portfolio = PortfolioEngine(
@@ -114,7 +152,7 @@ class LiveRuntime:
             broker=self._broker,
             order_config=self._ctx.config.order,
             idempotency=IdempotencyCache(ttl_sec=self._ctx.config.order.idempotency_ttl_sec),
-            order_repo=None,
+            order_repo=OrderRepository(db),
             audit_logger=self._audit,
         )
 
@@ -123,16 +161,29 @@ class LiveRuntime:
         from cocoon.trading.order.reconciliation import ReconciliationManager
 
         db = self._ctx.database()
+        pos_repo = PositionRepository(db)
         manager = ReconciliationManager(
             broker=self._broker,
-            position_repo=PositionRepository(db),
+            position_repo=pos_repo,
             order_repo=OrderRepository(db),
         )
-        manager.reconcile(raise_on_conflict=True)
+        # Paper broker starts empty, so local open positions left by a
+        # crashed paper session are simulations, not real money — close
+        # them instead of demanding manual resolution (exit 21).
+        report = manager.reconcile(raise_on_conflict=self._mode != "paper")
+        if self._mode == "paper":
+            for conflict in report.conflicts:
+                if conflict.get("type") == "local_position_missing_at_broker":
+                    pos_repo.close(conflict["ticket"])
+                    _logger.info("paper_stale_position_closed", ticket=conflict["ticket"])
 
     def _on_bar(self, bar: Bar) -> None:
         try:
             self._md.ingest_bar(bar, persist=False)
+            # SAFE_HALT means no new trades — but keep ingesting so the
+            # feature window is warm when trading resumes.
+            if self._sm.state != State.RUNNING:
+                return
             lookback = self._ctx.config.feature_engineering.lookback_bars
             window = self._md.get_window(bar.symbol, bar.timeframe, lookback)
             if window.height < 60:
@@ -146,6 +197,8 @@ class LiveRuntime:
                 ts_unix_ms=bar.ts_unix_ms,
                 model_version_hash=result.model_version_hash,
             )
+            if intent_signal is not None:
+                self._stat_signals += 1
             if intent_signal is None or atr_price <= 0:
                 return
             self._submit(intent_signal, bar, atr_price, result.model_version_hash)
@@ -182,6 +235,7 @@ class LiveRuntime:
         )
         decision = self._risk.evaluate(proposed, ctx)
         if not decision.approved:
+            self._stat_rejected += 1
             return
         key = make_idempotency_key(
             symbol=bar.symbol,
@@ -189,7 +243,7 @@ class LiveRuntime:
             signal_ts_unix_ms=bar.ts_unix_ms,
             model_version_hash=model_hash,
         )
-        self._order.submit(
+        result = self._order.submit(
             OrderIntent(
                 idempotency_key=key,
                 symbol=bar.symbol,
@@ -202,11 +256,143 @@ class LiveRuntime:
             signal_ts_unix_ms=bar.ts_unix_ms,
             model_version_hash=model_hash,
         )
+        if (
+            result.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED)
+            and result.broker_ticket_id is not None
+        ):
+            self._pos_repo.upsert_by_ticket(
+                broker_ticket_id=result.broker_ticket_id,
+                symbol=bar.symbol,
+                direction=sig.direction.value,
+                volume_lots=result.filled_volume_lots,
+                open_price=result.filled_price or bar.close,
+                stop_loss_price=sl,
+                take_profit_price=tp,
+                unrealized_pnl=0.0,
+                origin=PositionOrigin.INTERNAL.value,
+                is_open=True,
+            )
+            # A fill invalidates cached portfolio state; resync so the
+            # very next risk decision sees the new position.
+            self._portfolio.sync()
+
+    # ---- paper mode: replay cached bars through the live pipeline with a
+    # SimulatedBrokerAdapter behind the same L0 BrokerAdapter contract, so
+    # no MT5 terminal/EA is needed (§15.2 anti-divergence mechanism).
+
+    def _paper_broker(self):
+        from cocoon.trading.backtest.event_engine import SimulatedBrokerAdapter
+
+        return SimulatedBrokerAdapter(
+            slippage_pips=self._ctx.config.order.default_slippage_pips
+        )
+
+    def _resolve_paper_source(self) -> tuple[str, str]:
+        from cocoon.core.errors.exceptions import DataError
+
+        rows = self._md.coverage_status()
+        if self._paper_symbol:
+            rows = [r for r in rows if r["symbol"] == self._paper_symbol]
+        if self._paper_tf:
+            rows = [r for r in rows if r["tf"] == self._paper_tf]
+        if not rows:
+            raise DataError(
+                "No cached bars to replay for paper trading",
+                context={"symbol": self._paper_symbol, "tf": self._paper_tf,
+                         "hint": "cocoon data fetch / cocoon data import"},
+            )
+        best = max(rows, key=lambda r: r["bars"])
+        return best["symbol"], best["tf"]
+
+    def _start_paper_feed(self) -> None:
+        import threading
+
+        symbol, tf = self._resolve_paper_source()
+        _logger.info("paper_replay_start", symbol=symbol, tf=tf, speed=self._paper_speed)
+        self._feed_thread = threading.Thread(
+            target=self._paper_feed, args=(symbol, tf), daemon=True
+        )
+        self._feed_thread.start()
+
+    def _paper_feed(self, symbol: str, tf: str) -> None:
+        frame = self._md.load_cache(symbol, tf).sort("ts_unix_ms")
+        delay = 1.0 / self._paper_speed if self._paper_speed > 0 else 0.0
+        equity = self._paper_equity
+        last_close = 0.0
+        bars_fed = 0
+        for row in frame.iter_rows(named=True):
+            while self._running and self._sm.state != State.RUNNING:
+                time.sleep(0.2)
+            if not self._running:
+                break
+            bar = Bar(
+                symbol=symbol,
+                timeframe=tf,
+                ts_unix_ms=int(row["ts_unix_ms"]),
+                open=row["open"],
+                high=row["high"],
+                low=row["low"],
+                close=row["close"],
+                volume=row.get("volume") or 0.0,
+            )
+            last_close = bar.close
+            bars_fed += 1
+            open_before = {p.ticket_id for p in self._broker.get_positions()}
+            realized = self._broker.on_bar(bar)
+            if realized:
+                equity += sum(realized)
+                self._portfolio.set_account(
+                    equity=equity, realized_pnl_today=equity - self._paper_equity
+                )
+                still_open = {p.ticket_id for p in self._broker.get_positions()}
+                for ticket in open_before - still_open:
+                    self._pos_repo.close(ticket)
+                self._portfolio.sync()
+            self._broker.set_fill_price(bar.close)
+            self._on_bar(bar)
+            positions = self._broker.get_positions()
+            unrealized = sum(p.unrealized_pnl for p in positions)
+            closed = self._broker.closed_pnls
+            self.equity_curve.append(equity + unrealized)
+            self.stats = {
+                "symbol": symbol,
+                "tf": tf,
+                "bars_total": frame.height,
+                "bars_done": bars_fed,
+                "equity": equity,
+                "unrealized": unrealized,
+                "starting_equity": self._paper_equity,
+                "trades": len(closed),
+                "wins": sum(1 for pnl in closed if pnl > 0),
+                "open_positions": [
+                    (p.symbol, p.direction.value, p.volume_lots, p.open_price, p.unrealized_pnl)
+                    for p in positions
+                ],
+                "signals": self._stat_signals,
+                "rejected": self._stat_rejected,
+            }
+            if delay:
+                time.sleep(delay)
+        if last_close:
+            for pos in self._broker.get_positions():
+                self._pos_repo.close(pos.ticket_id)
+            equity += sum(self._broker.force_close_all(last_close))
+        self.paper_result = {
+            "symbol": symbol,
+            "tf": tf,
+            "bars_replayed": bars_fed,
+            "trades": len(self._broker.closed_pnls),
+            "starting_equity": self._paper_equity,
+            "final_equity": round(equity, 2),
+            "total_pnl": round(equity - self._paper_equity, 2),
+        }
+        _logger.info("paper_replay_complete", **self.paper_result)
+        self._running = False
 
     def run(self) -> None:
         self._sm.fire(Event.CONFIG_VALIDATED)
         self._sm.fire(Event.CONNECT_ATTEMPT)
-        self._broker = self._ctx.bridge_broker()
+        self._broker = self._paper_broker() if self._mode == "paper" else self._ctx.bridge_broker()
         self._broker.connect(self._ctx.config.runtime.mt5_connect_timeout_ms)
         self._sm.fire(Event.EA_ACK)
         self._sm.fire(Event.RECONCILE_START)
@@ -215,6 +401,11 @@ class LiveRuntime:
         self._portfolio.sync()
         self._broker.subscribe_bars(self._on_bar)
         self._sm.fire(Event.DIFF_RESOLVED)
+        if self._mode == "paper":
+            self._portfolio.set_account(
+                equity=self._paper_equity, equity_session_start=self._paper_equity
+            )
+            self._start_paper_feed()
         _write_state(self._ctx, state=self._sm.state.value, mode=self._mode, started_ms=int(time.time() * 1000))
         _set_control(self._ctx, "run")
         _logger.info("trade_running", mode=self._mode)
@@ -228,6 +419,8 @@ class LiveRuntime:
         while self._running:
             action = _read_control(self._ctx)
             if action == "stop":
+                # Also stop the paper feed thread, which watches _running.
+                self._running = False
                 break
             if action == "halt" and self._sm.state == State.RUNNING:
                 self._sm.fire(Event.MANUAL_HALT)
@@ -236,12 +429,19 @@ class LiveRuntime:
                 self._reconcile()
                 self._sm.fire(Event.DIFF_RESOLVED)
                 _set_control(self._ctx, "run")
-            if self._sm.state == State.RUNNING and self._broker._heartbeat.is_stale():
+            # Paper replay has no EA heartbeat to miss.
+            if (
+                self._mode != "paper"
+                and self._sm.state == State.RUNNING
+                and self._broker._heartbeat.is_stale()
+            ):
                 self._sm.fire(Event.HEARTBEAT_MISS_THRESHOLD)
             _write_state(self._ctx, state=self._sm.state.value, mode=self._mode)
             time.sleep(interval)
 
     def _shutdown(self) -> None:
+        if self._feed_thread is not None:
+            self._feed_thread.join(timeout=5.0)
         if not self._sm.is_terminal and self._sm.state != State.SHUTTING_DOWN:
             try:
                 self._sm.fire(Event.SHUTDOWN_CMD)
@@ -264,18 +464,44 @@ class LiveRuntime:
 @guard
 def start(
     ctx: typer.Context,
-    mode: str = typer.Option(None, "--mode", help="live|paper"),
-    profile: str = typer.Option(None, "--profile"),
+    mode: str = typer.Option(None, "--mode", help="live|paper (default: runtime.mode from config)"),
+    profile: str = typer.Option(None, "--profile", help="Config profile to trade with"),
+    symbol: str = typer.Option(None, "--symbol", help="Paper mode: cached symbol to replay (default: largest cache)"),
+    tf: str = typer.Option(None, "--tf", help="Paper mode: cached timeframe to replay"),
+    speed: float = typer.Option(20.0, "--speed", help="Paper mode: replay speed in bars/second (0 = as fast as possible)"),
+    equity: float = typer.Option(10_000.0, "--equity", help="Paper mode: starting account equity"),
+    dashboard: bool | None = typer.Option(None, "--dashboard/--no-dashboard", help="Paper mode: live progress dashboard (default: auto when on a terminal)"),
 ) -> None:
     app_ctx = get_context(ctx)
     run_mode = mode or app_ctx.config.runtime.mode.value
     if app_ctx.options.dry_run:
-        console.print(f"[dim]dry-run: would start trading mode={run_mode}[/]")
+        output_obj(ctx, {"dry_run": True, "action": "start", "mode": run_mode}, title="trade start")
         return
-    runtime = LiveRuntime(app_ctx, mode=run_mode)
+    runtime = LiveRuntime(
+        app_ctx,
+        mode=run_mode,
+        paper_symbol=symbol,
+        paper_tf=tf,
+        paper_speed=speed,
+        paper_equity=equity,
+    )
     signal_mod.signal(signal_mod.SIGINT, lambda *_a: runtime.request_stop())
-    console.print(f"[bold cyan]Cocoon trading started[/] mode={run_mode} (Ctrl-C to stop)")
-    runtime.run()
+    use_dashboard = (
+        run_mode == "paper"
+        and app_ctx.options.output != "json"
+        and (dashboard if dashboard is not None else sys.stdout.isatty())
+    )
+    if use_dashboard:
+        from cocoon.cli.dashboard.paper_view import run_paper_dashboard
+        from cocoon.core.logging.setup import quiet_console_logging
+
+        quiet_console_logging()
+        run_paper_dashboard(runtime)
+    else:
+        output_obj(ctx, {"mode": run_mode, "status": "started", "stop": "Ctrl-C"}, title="trade start")
+        runtime.run()
+    if runtime.paper_result is not None:
+        output_obj(ctx, runtime.paper_result, title="paper session summary")
 
 
 @app.command()
@@ -283,20 +509,20 @@ def start(
 def stop(ctx: typer.Context) -> None:
     app_ctx = get_context(ctx)
     _set_control(app_ctx, "stop")
-    console.print("[green]stop signal sent[/]")
+    output_obj(ctx, {"signal": "stop", "status": "sent"}, title="trade stop")
 
 
 @app.command()
 @guard
 def halt(
     ctx: typer.Context,
-    yes: bool = typer.Option(False, "--yes"),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
 ) -> None:
     app_ctx = get_context(ctx)
     if not (yes or app_ctx.options.yes):
         typer.confirm("Halt trading (SAFE_HALT)?", abort=True)
     _set_control(app_ctx, "halt")
-    console.print("[yellow]halt signal sent[/]")
+    output_obj(ctx, {"signal": "halt", "status": "sent"}, title="trade halt")
 
 
 @app.command()
@@ -304,14 +530,14 @@ def halt(
 def resume(ctx: typer.Context) -> None:
     app_ctx = get_context(ctx)
     _set_control(app_ctx, "resume")
-    console.print("[green]resume signal sent[/]")
+    output_obj(ctx, {"signal": "resume", "status": "sent"}, title="trade resume")
 
 
 @app.command()
 @guard
 def status(
     ctx: typer.Context,
-    watch: bool = typer.Option(False, "--watch"),
+    watch: bool = typer.Option(False, "--watch", help="Live-refreshing dashboard instead of a one-shot view"),
 ) -> None:
     app_ctx = get_context(ctx)
     from cocoon.cli.dashboard.live_view import render_once, watch_dashboard

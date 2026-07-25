@@ -57,9 +57,9 @@ def _record_run(app_ctx, result) -> None:
 @guard
 def run(
     ctx: typer.Context,
-    dataset: str = typer.Option(..., "--dataset"),
+    dataset: str = typer.Option(..., "--dataset", help="ds_* id from `cocoon dataset build`"),
     model: str = typer.Option(..., "--model", help="lightgbm|xgboost|tabnet|ensemble"),
-    hpo: bool = typer.Option(False, "--hpo"),
+    hpo: bool = typer.Option(False, "--hpo", help="Run Optuna hyperparameter search (single model only)"),
 ) -> None:
     app_ctx = get_context(ctx)
     result = _orchestrator(app_ctx).run(dataset_id=dataset, model_name=model, hpo=hpo)
@@ -75,8 +75,8 @@ def run(
 @guard
 def walk_forward(
     ctx: typer.Context,
-    dataset: str = typer.Option(..., "--dataset"),
-    model: str = typer.Option(..., "--model"),
+    dataset: str = typer.Option(..., "--dataset", help="ds_* id from `cocoon dataset build`"),
+    model: str = typer.Option(..., "--model", help="lightgbm|xgboost|tabnet|ensemble"),
 ) -> None:
     app_ctx = get_context(ctx)
     result = _orchestrator(app_ctx).walk_forward(dataset_id=dataset, model_name=model)
@@ -86,7 +86,10 @@ def walk_forward(
 
 @app.command()
 @guard
-def status(ctx: typer.Context, run_id: str = typer.Argument(...)) -> None:
+def status(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Run id printed by `cocoon train run`"),
+) -> None:
     app_ctx = get_context(ctx)
     from cocoon.persistence.models import ModelRun
     from sqlalchemy import select

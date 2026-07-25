@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from cocoon.cli import console, get_context, guard, output_rows
+from cocoon.cli import get_context, guard, output_obj, output_rows
 
 app = typer.Typer(help="Position management", no_args_is_help=True)
 
@@ -27,18 +27,18 @@ def list_positions(ctx: typer.Context) -> None:
 @guard
 def close(
     ctx: typer.Context,
-    ticket_id: int = typer.Argument(...),
-    partial: float = typer.Option(None, "--partial", help="lots to close"),
+    ticket_id: int = typer.Argument(..., help="Broker ticket id, as shown by `cocoon positions list`"),
+    partial: float = typer.Option(None, "--partial", help="Lots to close; omit to close the whole position"),
 ) -> None:
     app_ctx = get_context(ctx)
     if app_ctx.options.dry_run:
-        console.print(f"[dim]dry-run: would close ticket {ticket_id} partial={partial}[/]")
+        output_obj(ctx, {"dry_run": True, "action": "close", "ticket": ticket_id, "partial": partial}, title="positions close")
         return
     broker = app_ctx.bridge_broker()
     broker.connect(app_ctx.config.runtime.mt5_connect_timeout_ms)
     try:
         result = broker.cancel_order(ticket_id)
-        console.print(f"[green]close requested[/] ticket={ticket_id} status={result.status.value}")
+        output_obj(ctx, {"ticket": ticket_id, "status": result.status.value}, title="close requested")
         from cocoon.persistence.repositories import PositionRepository
 
         PositionRepository(app_ctx.database()).close(ticket_id)

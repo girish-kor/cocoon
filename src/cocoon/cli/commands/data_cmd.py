@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from cocoon.cli import console, get_context, guard, output_obj, output_rows
+from cocoon.cli import get_context, guard, output_obj, output_rows
 from cocoon.core.errors.exceptions import DataError
 from cocoon.data.market_data.mt5_fetcher import MT5Fetcher, to_datetime_utc
 
@@ -115,14 +115,14 @@ def _parse_ts(frame, col: str):
 @guard
 def fetch(
     ctx: typer.Context,
-    symbol: str = typer.Option(..., "--symbol"),
-    tf: str = typer.Option(..., "--tf"),
-    from_date: str = typer.Option(..., "--from"),
-    to_date: str = typer.Option(..., "--to"),
+    symbol: str = typer.Option(..., "--symbol", help="e.g. EURUSD"),
+    tf: str = typer.Option(..., "--tf", help="Timeframe: M1|M5|M15|M30|H1|H4|D1"),
+    from_date: str = typer.Option(..., "--from", help="Start date (UTC), e.g. 2024-01-01"),
+    to_date: str = typer.Option(..., "--to", help="End date (UTC), e.g. 2024-06-01"),
 ) -> None:
     app_ctx = get_context(ctx)
     if app_ctx.options.dry_run:
-        console.print(f"[dim]dry-run: would fetch {symbol} {tf} {from_date}..{to_date}[/]")
+        output_obj(ctx, {"dry_run": True, "action": "fetch", "symbol": symbol, "tf": tf, "from": from_date, "to": to_date}, title="data fetch")
         return
     fetcher = MT5Fetcher(terminal_path=app_ctx.config.mt5.terminal_path)
     frame = fetcher.fetch(symbol, tf, to_datetime_utc(from_date), to_datetime_utc(to_date))
@@ -135,8 +135,8 @@ def fetch(
 @guard
 def import_file(
     ctx: typer.Context,
-    symbol: str = typer.Option(..., "--symbol"),
-    tf: str = typer.Option(..., "--tf"),
+    symbol: str = typer.Option(..., "--symbol", help="Symbol to file the bars under, e.g. EURUSD"),
+    tf: str = typer.Option(..., "--tf", help="Timeframe to file the bars under, e.g. M5"),
     file: str = typer.Option(..., "--file", help="CSV or Parquet with OHLCV columns"),
 ) -> None:
     """Import OHLCV bars from a local CSV/Parquet file into the cache.
@@ -153,7 +153,7 @@ def import_file(
             "Import file produced zero usable rows", context={"path": str(path)}
         )
     if app_ctx.options.dry_run:
-        console.print(f"[dim]dry-run: would import {frame.height} bars for {symbol} {tf}[/]")
+        output_obj(ctx, {"dry_run": True, "action": "import", "symbol": symbol, "tf": tf, "bars": frame.height}, title="data import")
         return
     stored = app_ctx.market_data().store_frame(symbol, tf, frame)
     output_obj(
@@ -175,11 +175,11 @@ def status(ctx: typer.Context) -> None:
 @guard
 def cache_clear(
     ctx: typer.Context,
-    symbol: str = typer.Option(None, "--symbol"),
+    symbol: str = typer.Option(None, "--symbol", help="Only this symbol; omit to clear everything"),
 ) -> None:
     app_ctx = get_context(ctx)
     removed = app_ctx.market_data().clear_cache(symbol)
-    console.print(f"[green]cleared {removed} cache file(s)[/]")
+    output_obj(ctx, {"symbol": symbol or "all", "files_removed": removed}, title="cache clear")
 
 
 @cache_app.command("stats")

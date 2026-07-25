@@ -23,12 +23,12 @@ def _backtests_dir(app_ctx) -> Path:
 @guard
 def run(
     ctx: typer.Context,
-    model_version: str = typer.Option(..., "--model-version"),
-    symbols: str = typer.Option(..., "--symbols"),
-    tf: str = typer.Option("M5", "--tf"),
-    from_date: str = typer.Option(None, "--from"),
-    to_date: str = typer.Option(None, "--to"),
-    starting_equity: float = typer.Option(10_000.0, "--equity"),
+    model_version: str = typer.Option(..., "--model-version", help="Registry run_id, e.g. lightgbm_0e80d8aeb573"),
+    symbols: str = typer.Option(..., "--symbols", help="Comma-separated, e.g. EURUSD,GBPUSD"),
+    tf: str = typer.Option("M5", "--tf", help="Timeframe: M1|M5|M15|M30|H1|H4|D1"),
+    from_date: str = typer.Option(None, "--from", help="Start date (UTC), e.g. 2024-03-01"),
+    to_date: str = typer.Option(None, "--to", help="End date (UTC), e.g. 2024-05-01"),
+    starting_equity: float = typer.Option(10_000.0, "--equity", help="Starting account equity"),
 ) -> None:
     import polars as pl
 
@@ -46,6 +46,7 @@ def run(
 
     per_symbol = []
     all_pnls: list[float] = []
+    skipped: list[str] = []
     for symbol in symbol_list:
         frame = md.load_cache(symbol, tf)
         if from_date:
@@ -59,7 +60,7 @@ def run(
             hi = int(to_datetime_utc(to_date).timestamp() * 1000)
             frame = frame.filter(pl.col("ts_unix_ms") <= hi)
         if frame.height < 300:
-            console.print(f"[yellow]skipping {symbol}: too few bars[/]")
+            skipped.append(symbol)
             continue
         engine = BacktestEventEngine(
             feature_engine=fe,
@@ -88,7 +89,10 @@ def run(
     (_backtests_dir(app_ctx) / f"{bt_id}.json").write_text(
         json.dumps(payload, indent=2, default=str), encoding="utf-8"
     )
-    output_obj(ctx, {"backtest_id": bt_id, "total_trades": payload["total_trades"], "total_pnl": payload["total_pnl"]}, title="backtest complete")
+    result_row = {"backtest_id": bt_id, "total_trades": payload["total_trades"], "total_pnl": payload["total_pnl"]}
+    if skipped:
+        result_row["skipped (too few bars)"] = skipped
+    output_obj(ctx, result_row, title="backtest complete")
 
 
 # (csv_key, table label, format) in reading order: activity → result → risk.
@@ -161,13 +165,20 @@ def _summary_rows(per_symbol: list[dict]) -> list[dict]:
 @guard
 def report(
     ctx: typer.Context,
-    backtest_id: str = typer.Argument(...),
-    export: str = typer.Option(None, "--export", help="csv|json"),
+    backtest_id: str = typer.Argument(
+        ..., help="bt_* id printed by `cocoon backtest run`"
+    ),
+    export: str = typer.Option(
+        None,
+        "--export",
+        help="csv|json — full-precision export; csv shows a table on a "
+        "terminal and raw CSV when redirected",
+    ),
 ) -> None:
     app_ctx = get_context(ctx)
     path = _backtests_dir(app_ctx) / f"{backtest_id}.json"
     if not path.exists():
-        console.print(f"[yellow]no such backtest[/] {backtest_id}")
+        output_obj(ctx, {"backtest_id": backtest_id, "found": False}, title="backtest report")
         raise typer.Exit(0)
     payload = json.loads(path.read_text(encoding="utf-8"))
     if export == "json":
@@ -183,10 +194,6 @@ def report(
             # render the same full detail as a table. Redirects and pipes
             # (`> report.csv`, `| jq`) still get raw CSV below.
             console.print(_detail_table(payload["per_symbol"]))
-            console.print(
-                f"[dim]raw CSV: cocoon backtest report {backtest_id} "
-                f"--export csv > report.csv[/]"
-            )
             return
 
         buf = io.StringIO()

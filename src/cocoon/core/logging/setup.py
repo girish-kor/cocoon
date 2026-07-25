@@ -88,5 +88,15 @@ def configure_logging(logging_config: LoggingConfig, *, log_level: LogLevel) -> 
     stream_handler.setFormatter(formatter)
 
 
+def quiet_console_logging() -> None:
+    """Drop the stderr handler so records go to the rotating file only —
+    used while a rich Live display owns the terminal. The file handler
+    (a StreamHandler subclass) is kept, so nothing is lost."""
+    root_logger = logging.getLogger()
+    for handler in list(root_logger.handlers):
+        if type(handler) is logging.StreamHandler:
+            root_logger.removeHandler(handler)
+
+
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     return structlog.get_logger(name)

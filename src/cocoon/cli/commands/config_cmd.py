@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 import yaml
 
-from cocoon.cli import get_context, guard, output_obj, console
+from cocoon.cli import get_context, guard, output_obj
 from cocoon.core.config.loader import default_sources, resolve
 
 app = typer.Typer(help="Configuration management", no_args_is_help=True)
@@ -20,8 +20,8 @@ app.add_typer(profile_app, name="profile")
 @guard
 def show(
     ctx: typer.Context,
-    profile: str = typer.Option(None, "--profile"),
-    resolved: bool = typer.Option(False, "--resolved", help="Show fully resolved config"),
+    profile: str = typer.Option(None, "--profile", help="Show this profile's raw overrides"),
+    resolved: bool = typer.Option(False, "--resolved", help="Show the fully merged config (defaults + files + env)"),
 ) -> None:
     app_ctx = get_context(ctx)
     if resolved or profile is None:
@@ -36,21 +36,21 @@ def show(
 @guard
 def validate(
     ctx: typer.Context,
-    profile: str = typer.Option(None, "--profile"),
+    profile: str = typer.Option(None, "--profile", help="Profile to validate (default: active profile)"),
 ) -> None:
     app_ctx = get_context(ctx)
     name = profile or app_ctx.options.profile
     resolve(default_sources(profile=name, config_dir=app_ctx.config_dir))
-    console.print(f"[green]config for profile '{name}' is valid[/]")
+    output_obj(ctx, {"profile": name, "valid": True}, title="config validate")
 
 
 @app.command(name="set")
 @guard
 def set_value(
     ctx: typer.Context,
-    dot_path: str = typer.Argument(..., help="e.g. risk.max_daily_loss_pct"),
-    value: str = typer.Argument(...),
-    profile: str = typer.Option(None, "--profile"),
+    dot_path: str = typer.Argument(..., help="Nested key, e.g. risk.max_daily_loss_pct"),
+    value: str = typer.Argument(..., help="New value; parsed as JSON when possible (1.5, true, [\"M5\"])"),
+    profile: str = typer.Option(None, "--profile", help="Profile to write to (default: active profile)"),
 ) -> None:
     app_ctx = get_context(ctx)
     name = profile or app_ctx.options.profile
@@ -68,29 +68,29 @@ def set_value(
     cursor[parts[-1]] = coerced
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    console.print(f"[green]set[/] {dot_path} = {coerced} in profile '{name}'")
+    output_obj(ctx, {"profile": name, "key": dot_path, "value": coerced}, title="config set")
 
 
 @profile_app.command("create")
 @guard
 def profile_create(
     ctx: typer.Context,
-    name: str = typer.Argument(...),
-    from_profile: str = typer.Option(None, "--from"),
+    name: str = typer.Argument(..., help="New profile name"),
+    from_profile: str = typer.Option(None, "--from", help="Copy overrides from this existing profile"),
 ) -> None:
     app_ctx = get_context(ctx)
     profiles_dir = Path(app_ctx.config_dir) / "profiles"
     profiles_dir.mkdir(parents=True, exist_ok=True)
     dest = profiles_dir / f"{name}.yaml"
     if dest.exists():
-        console.print(f"[yellow]profile '{name}' already exists[/]")
+        output_obj(ctx, {"profile": name, "status": "already exists"}, title="profile create")
         raise typer.Exit(0)
     if from_profile:
         src = profiles_dir / f"{from_profile}.yaml"
         dest.write_text(src.read_text(encoding="utf-8") if src.exists() else "", encoding="utf-8")
     else:
         dest.write_text("# profile overrides\n", encoding="utf-8")
-    console.print(f"[green]created profile[/] {name}")
+    output_obj(ctx, {"profile": name, "status": "created", "path": str(dest)}, title="profile create")
 
 
 @profile_app.command("list")
@@ -104,11 +104,14 @@ def profile_list(ctx: typer.Context) -> None:
 
 @profile_app.command("delete")
 @guard
-def profile_delete(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
+def profile_delete(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Profile to delete"),
+) -> None:
     app_ctx = get_context(ctx)
     dest = Path(app_ctx.config_dir) / "profiles" / f"{name}.yaml"
     if dest.exists():
         dest.unlink()
-        console.print(f"[green]deleted profile[/] {name}")
+        output_obj(ctx, {"profile": name, "status": "deleted"}, title="profile delete")
     else:
-        console.print(f"[yellow]no such profile[/] {name}")
+        output_obj(ctx, {"profile": name, "status": "not found"}, title="profile delete")
