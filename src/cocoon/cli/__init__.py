@@ -12,13 +12,16 @@ from __future__ import annotations
 import enum
 import functools
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 import typer
 from rich.console import Console
+from rich.padding import Padding
 from rich.table import Table
+from rich.text import Text
 
 from cocoon._layering import enforce_layering
 
@@ -34,6 +37,58 @@ from cocoon.core.logging.setup import configure_logging, get_logger
 _logger = get_logger(__name__)
 console = Console()
 err_console = Console(stderr=True)
+
+# TERMINAL_V2.md §2.2 — outcome glyphs, ASCII under TERM=dumb. Rich handles
+# NO_COLOR / non-TTY colour stripping itself.
+_DUMB_TERM = os.environ.get("TERM") == "dumb"
+GLYPH_OK = "OK" if _DUMB_TERM else "✓"
+GLYPH_NONE = "-" if _DUMB_TERM else "–"
+GLYPH_ERR = "X" if _DUMB_TERM else "✗"
+
+_NEUTRAL_STATUS = ("not found", "already exists", "unknown format", "none")
+
+# TERMINAL_V2.md §2.1 — semantic value colours (ANSI-16 only).
+_TITLE_STYLE = "bold cyan"
+_KEY_STYLE = "dim cyan"
+_ID_KEYS = {
+    "run_id", "dataset_id", "backtest_id", "artifact_hash", "hash",
+    "idempotency_key", "ticket", "broker_ticket_id", "session_id",
+}
+_PATH_KEYS = {"path", "paths", "root", "file"}
+_PNL_KEYS = {"pnl", "total_pnl", "unrealized_pnl", "expectancy"}
+_NAME_KEYS = {"symbol", "symbols", "model", "profile", "name"}
+_STATUS_OK = {"FILLED", "ACKNOWLEDGED", "PARTIALLY_FILLED"}
+
+
+def _semantic_style(key: str, value: Any) -> str | None:
+    """Colour a cell by what it means, never just to decorate."""
+    k = str(key).lower()
+    if k in ("dir", "direction"):
+        return {"BUY": "green", "SELL": "red"}.get(str(value))
+    if k == "status":
+        text = str(value).upper()
+        if text in _STATUS_OK:
+            return "green"
+        if "REJECT" in text or "FAILED" in text or "TIMEOUT" in text:
+            return "red"
+        return None
+    if k == "stage":
+        return {"production": "green", "staging": "yellow", "none": "dim"}.get(str(value))
+    if k == "origin":
+        return "yellow" if str(value) == "external" else "dim"
+    if k in _PNL_KEYS and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return "green" if value >= 0 else "red"
+    if k in _ID_KEYS or k.endswith("_id"):
+        return "magenta"
+    if k in _PATH_KEYS:
+        return "blue"
+    if k in _NAME_KEYS:
+        return "bold"
+    if isinstance(value, bool):
+        return "green" if value else "dim"
+    if isinstance(value, (int, float)):
+        return "yellow"
+    return None
 
 
 @dataclass
@@ -130,9 +185,17 @@ def build_context(options: GlobalOptions) -> AppContext:
 def _emit_error(exc: CocoonError) -> None:
     record = exc.to_log_record()
     _logger.error("cli_error", **record)
-    err_console.print(f"[bold red]{record['error_type']}[/]: {record['message']}")
+    err_console.print(
+        Text.assemble(
+            (f"{GLYPH_ERR} ", "red"),
+            (str(record["error_type"]), "bold red"),
+            (f": {record['message']}", ""),
+        )
+    )
     if record.get("context"):
-        err_console.print(f"[dim]context: {json.dumps(record['context'], default=str)}[/]")
+        err_console.print(
+            Text(f"  context: {json.dumps(record['context'], default=str)}", style="dim")
+        )
 
 
 def guard(func: Callable) -> Callable:
@@ -192,13 +255,39 @@ def _render_value(value: Any) -> str:
     return _fmt_scalar(value)
 
 
+def _decorated_value(key: str, value: Any, title: str) -> Text | None:
+    """TERMINAL_V2.md §6.7 — outcome glyphs on status vocabulary. Table mode
+    only; the JSON path never sees these."""
+    if key == "status":
+        text = str(value)
+        if text.startswith(_NEUTRAL_STATUS):
+            return Text(f"{GLYPH_NONE} {text}", style="dim")
+        return Text(f"{GLYPH_OK} {text}", style="green")
+    if key == "valid" and value is True:
+        return Text(f"{GLYPH_OK} True", style="green")
+    if key == "found" and value is False:
+        return Text("False", style="dim")
+    if key == "stage" and title == "model promote":
+        return Text(f"{GLYPH_OK} {value}", style="green")
+    return None
+
+
+def _print_titled(title: str, renderable) -> None:
+    """§2.3 block layout: bold flush-left title, data indented two spaces."""
+    if title:
+        console.print(Text(title, style=_TITLE_STYLE))
+    console.print(Padding(renderable, (0, 0, 0, 2)))
+
+
 def output_rows(ctx: typer.Context, rows: list[dict[str, Any]], *, title: str = "") -> None:
     app_ctx = get_context(ctx)
     if app_ctx.options.output == "json":
         console.print_json(json.dumps(rows, default=str))
         return
     if not rows:
-        console.print(f"[dim]{title or 'no rows'}[/]")
+        console.print(
+            Text.assemble((title or "no rows", _TITLE_STYLE), (f"  {GLYPH_NONE} none", "dim"))
+        )
         return
     columns = list(rows[0].keys())
     numeric = {
@@ -209,12 +298,27 @@ def output_rows(ctx: typer.Context, rows: list[dict[str, Any]], *, title: str = 
         )
         for col in columns
     }
-    table = Table(title=title or None)
+    table = Table(
+        box=None,
+        show_edge=False,
+        pad_edge=False,
+        padding=(0, 2, 0, 0),
+        header_style=_KEY_STYLE,
+    )
     for col in columns:
-        table.add_column(str(col), justify="right" if numeric[col] else "left")
+        table.add_column(
+            str(col).upper().replace("_", " "),
+            justify="right" if numeric[col] else "left",
+        )
     for row in rows:
-        table.add_row(*[_fmt_scalar(row.get(col, "")) for col in columns])
-    console.print(table)
+        cells = []
+        for col in columns:
+            raw = row.get(col, "")
+            style = _semantic_style(str(col), raw)
+            rendered = _fmt_scalar(raw)
+            cells.append(Text(rendered, style=style) if style else rendered)
+        table.add_row(*cells)
+    _print_titled(title, table)
 
 
 def output_obj(ctx: typer.Context, obj: dict[str, Any], *, title: str = "") -> None:
@@ -222,9 +326,14 @@ def output_obj(ctx: typer.Context, obj: dict[str, Any], *, title: str = "") -> N
     if app_ctx.options.output == "json":
         console.print_json(json.dumps(obj, default=str))
         return
-    table = Table(title=title or None, show_header=False)
-    table.add_column("key", style="bold")
-    table.add_column("value")
+    grid = Table.grid(padding=(0, 2, 0, 0))
+    grid.add_column(style=_KEY_STYLE)
+    grid.add_column()
     for k, v in obj.items():
-        table.add_row(str(k), _render_value(v))
-    console.print(table)
+        cell = _decorated_value(str(k), v, title)
+        if cell is None:
+            rendered = _render_value(v)
+            style = None if isinstance(v, (dict, list)) else _semantic_style(str(k), v)
+            cell = Text(rendered, style=style) if style else rendered
+        grid.add_row(str(k), cell)
+    _print_titled(title, grid)

@@ -1,0 +1,78 @@
+flowchart TB
+    SRC[("CSV / Parquet files · MetaTrader 5 fetch")]
+
+    subgraph L1["L1 data"]
+        CACHE[("parquet cache<br/>data/raw/SYMBOL/TF")]
+        RB["ring-buffer live window"]
+        FE["feature engine<br/>25 causal features (SMC + TA + context)"]
+        LBL["labeling<br/>forward return · horizon · deadband"]
+        DSB["dataset builder<br/>content-hashed ds_*"]
+    end
+
+    subgraph L2["L2 ml"]
+        TRN["training orchestrator<br/>purged walk-forward + Optuna HPO"]
+        REG[("model registry<br/>run_id = model_contenthash<br/>stages: none → staging → production")]
+        INF["inference engine<br/>P(up) + model_version_hash"]
+    end
+
+    subgraph L3["L3 trading"]
+        SIG["signal engine<br/>confidence threshold · regime filter"]
+        RSK["risk engine<br/>sequenced checks → approve/reject"]
+        PRT["portfolio engine<br/>staleness-gated broker cache"]
+        ORD["order engine<br/>idempotency · retry/backoff · lifecycle"]
+        REC["reconciliation<br/>broker ⇄ sqlite diff on startup"]
+        BTE["backtest event engine"]
+        SIM["SimulatedBrokerAdapter<br/>next-open ± slippage · SL/TP on bar range"]
+    end
+
+    subgraph L4["L4 bridge"]
+        PRO["msgpack protocol v1<br/>HELLO · ORDER_* · BAR_CLOSED · HEARTBEAT"]
+        ZMQ["ZmqBrokerAdapter<br/>REQ/REP + PUB/SUB"]
+        HBM["heartbeat monitor<br/>miss threshold → SAFE_HALT"]
+    end
+
+    EA["MetaTrader 5 EA<br/>mql5/CocoonEA.mq5 (skeleton)"]
+
+    subgraph L0["L0 core — everything imports down into this"]
+        CFG["config (pydantic, strict)"]
+        SMC["state machine"]
+        IFC["BrokerAdapter ABC"]
+        ERR["errors + exit-code catalogue"]
+        AUD["structured logging + audit"]
+    end
+
+    subgraph L5["L5 cli — composition root"]
+        CMD["typer commands · menu · dashboards"]
+    end
+
+    subgraph PERS["persistence"]
+        DB[("sqlite<br/>orders · positions · model runs · audit mirror")]
+        JL[("logs/audit.jsonl<br/>append-only, monotonic seq")]
+    end
+
+    SRC --> CACHE
+    CACHE --> FE --> LBL --> DSB --> TRN --> REG --> INF
+    CACHE -- "paper replay (empty window)" --> RB
+    ZMQ -- "live bars" --> RB
+    RB -- "point-in-time window" --> FE
+    INF --> SIG --> RSK --> ORD
+    PRT --> RSK
+    ORD -- "BrokerAdapter contract" --> IFC
+    IFC --> ZMQ
+    IFC --> SIM
+    ZMQ <--> PRO
+    PRO <--> EA
+    HBM --> SMC
+    BTE --> SIG
+    BTE --> SIM
+    REC --> DB
+    ORD --> DB
+    ORD --> AUD
+    SIG --> AUD
+    SMC --> AUD
+    AUD --> JL
+    AUD --> DB
+    CMD --> L1
+    CMD --> L2
+    CMD --> L3
+    CMD --> L4

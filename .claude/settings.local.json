@@ -20,7 +20,11 @@
       "PowerShell(python -m py_compile src/cocoon/cli/main.py src/cocoon/cli/commands/backtest_cmd.py src/cocoon/cli/commands/config_cmd.py src/cocoon/cli/commands/data_cmd.py src/cocoon/cli/commands/dataset_cmd.py src/cocoon/cli/commands/features_cmd.py src/cocoon/cli/commands/model_cmd.py src/cocoon/cli/commands/plugin_cmd.py src/cocoon/cli/commands/positions_cmd.py src/cocoon/cli/commands/report_cmd.py src/cocoon/cli/commands/trade_cmd.py; if \\($?\\) { \"COMPILE OK\" })",
       "PowerShell(python -m py_compile src/cocoon/cli/__init__.py src/cocoon/cli/commands/trade_cmd.py src/cocoon/cli/commands/report_cmd.py src/cocoon/persistence/audit_sink.py; if \\($?\\) { \"COMPILE OK\" })",
       "PowerShell(cocoon trade *)",
-      "PowerShell(Get-Content *)"
+      "PowerShell(Get-Content *)",
+      "PowerShell(& \"C:\\\\Users\\\\giris\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" \"C:\\\\Users\\\\giris\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-giris-Desktop-cocoon\\\\124d1f21-2360-4278-ad1b-dfc19ee773f8\\\\scratchpad\\\\gen_terminal_md.py\")",
+      "PowerShell(\\(Get-Item TERMINAL.md\\).Length; \\(Get-Content TERMINAL.md | Measure-Object -Line\\).Lines; Select-String -Path TERMINAL.md -Pattern '^## |^### ' | Select-Object -ExpandProperty Line)",
+      "PowerShell(& \"C:\\\\Users\\\\giris\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" \"C:\\\\Users\\\\giris\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-giris-Desktop-cocoon\\\\124d1f21-2360-4278-ad1b-dfc19ee773f8\\\\scratchpad\\\\trim_terminal_md.py\"; \\(Get-Item TERMINAL.md\\).Length)",
+      "PowerShell(& \"C:\\\\Users\\\\giris\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" \"C:\\\\Users\\\\giris\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-giris-Desktop-cocoon\\\\124d1f21-2360-4278-ad1b-dfc19ee773f8\\\\scratchpad\\\\trim_terminal_md.py\"; \\(Get-Item TERMINAL.md\\).Length; \\(Get-Content TERMINAL.md | Measure-Object -Line\\).Lines)"
     ]
   }
 }

@@ -10,6 +10,7 @@ import json
 import time
 from pathlib import Path
 
+from rich import box
 from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
@@ -18,10 +19,13 @@ from rich.text import Text
 
 _console = Console()
 
+_SEP = (" · ", "dim")
+
 _STATE_STYLE = {
     "RUNNING": "cyan",
     "SAFE_HALT": "yellow bold",
-    "SHUTTING_DOWN": "grey50",
+    "SHUTTING_DOWN": "dim",
+    "TERMINATED": "dim",
     "STATE_RECONCILING": "cyan",
 }
 
@@ -52,50 +56,62 @@ def _render(app_ctx):
     positions = _positions(app_ctx)
 
     header = Text.assemble(
-        ("Cocoon — ", "bold white"),
-        (str(app_ctx.config.runtime.mode.value).upper(), "bold white"),
-        ("  profile:", "dim"),
-        (app_ctx.options.profile, "white"),
-        ("  state:", "dim"),
+        ("Cocoon", "bold"),
+        _SEP,
+        (str(app_ctx.config.runtime.mode.value).upper(), "bold"),
+        _SEP,
+        ("profile ", "dim"),
+        (app_ctx.options.profile, ""),
+        _SEP,
         (state_name, style),
     )
 
     total_pnl = sum(p.get("unrealized_pnl", 0.0) for p in positions)
     pnl_style = "green" if total_pnl >= 0 else "red"
     summary = Text.assemble(
-        (f"Open Positions: {len(positions)}/{app_ctx.config.risk.max_open_positions}   ", "white"),
-        ("Unrealized P&L: ", "white"),
+        (f"open {len(positions)}/{app_ctx.config.risk.max_open_positions}", ""),
+        _SEP,
+        ("unrealized ", ""),
         (f"{total_pnl:+.2f}", pnl_style),
-        (f"   Daily Loss Budget: {app_ctx.config.risk.max_daily_loss_pct}%", "dim"),
+        _SEP,
+        (f"daily loss budget {app_ctx.config.risk.max_daily_loss_pct}%", "dim"),
     )
 
-    table = Table(expand=True)
+    table = Table(
+        box=None, show_edge=False, pad_edge=False,
+        padding=(0, 2, 0, 0), header_style="dim cyan",
+    )
     for col in ("SYMBOL", "DIR", "LOTS", "ENTRY", "SL", "TP", "P&L", "ORIGIN"):
         table.add_column(col)
     for p in positions:
         pnl = p.get("unrealized_pnl", 0.0)
+        direction = p.get("direction", "")
+        origin = p.get("origin", "")
         table.add_row(
-            p.get("symbol", ""),
-            p.get("direction", ""),
-            f"{p.get('volume_lots', 0):.2f}",
-            f"{p.get('open_price', 0):.5f}",
-            f"{(p.get('stop_loss_price') or 0):.5f}",
-            f"{(p.get('take_profit_price') or 0):.5f}",
+            Text(p.get("symbol", ""), style="bold"),
+            Text(direction, style="green" if direction == "BUY" else "red"),
+            Text(f"{p.get('volume_lots', 0):.2f}", style="yellow"),
+            Text(f"{p.get('open_price', 0):.5f}", style="yellow"),
+            Text(f"{(p.get('stop_loss_price') or 0):.5f}", style="yellow"),
+            Text(f"{(p.get('take_profit_price') or 0):.5f}", style="yellow"),
             Text(f"{pnl:+.2f}", style="green" if pnl >= 0 else "red"),
-            p.get("origin", ""),
+            Text(origin, style="yellow" if origin == "external" else "dim"),
         )
 
     footer = Text.assemble(
-        ("Bridge: ", "dim"),
-        ("CONNECTED" if state_name in ("RUNNING", "STATE_RECONCILING") else "—", "white"),
-        ("   Model: ", "dim"),
-        (str(app_ctx.config.model.ensemble), "white"),
+        ("bridge ", "dim"),
+        ("CONNECTED" if state_name in ("RUNNING", "STATE_RECONCILING") else "–", ""),
+        _SEP,
+        ("model ", "dim"),
+        (", ".join(app_ctx.config.model.ensemble), ""),
     )
 
     return Panel(
         Group(header, summary, table, footer),
         title="LIVE",
+        title_align="left",
         border_style=style,
+        box=box.ROUNDED,
     )
 
 

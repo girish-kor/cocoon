@@ -131,8 +131,11 @@ def _detail_table(per_symbol: list[dict]):
     column per symbol — so full detail fits any terminal width."""
     from rich.table import Table
 
-    table = Table(title="backtest metrics — full detail")
-    table.add_column("metric", style="bold")
+    table = Table(
+        box=None, show_edge=False, pad_edge=False,
+        padding=(0, 2, 0, 0), header_style="dim cyan",
+    )
+    table.add_column("METRIC", style="dim cyan")
     ordered = sorted(per_symbol, key=lambda r: r["symbol"])
     for row in ordered:
         table.add_column(row["symbol"], justify="right")
@@ -193,7 +196,11 @@ def report(
             # Interactive terminal: a wrapped CSV dump is unreadable, so
             # render the same full detail as a table. Redirects and pipes
             # (`> report.csv`, `| jq`) still get raw CSV below.
-            console.print(_detail_table(payload["per_symbol"]))
+            from rich.padding import Padding
+            from rich.text import Text
+
+            console.print(Text("backtest metrics — full detail", style="bold cyan"))
+            console.print(Padding(_detail_table(payload["per_symbol"]), (0, 0, 0, 2)))
             return
 
         buf = io.StringIO()
